@@ -83,12 +83,16 @@ struct Sockets_UDP sockets_udp;
 struct Sockets_TCP sockets_tcp;
 char *client_state = NULL;
 
+
 /*function declarations*/
 void end(int signal);
 void config_from_file(int argc, const char *argv[]);
+void print_message(char *message);
 void save_config(FILE *file);
 void setup_udp_socket();
-
+void service();
+void change_client_state(char *newstate);
+void register_to_server();
 
 
 /*main*/
@@ -100,6 +104,7 @@ int main(int argc, const char *argv[]){
      /*read and save the configuration from the config file*/
     config_from_file(argc,argv);
     setup_udp_socket();
+    service();
 }
 
 
@@ -158,6 +163,18 @@ void config_from_file(int argc, const char *argv[]){
     if (debug_mode) { print_message("DEBUG -> Read data from configuration files\n"); }
 }
 
+void print_message(char *message){
+    time_t now;
+    struct tm *now_tw;
+    char forwarted_time[100];
+
+
+    now = time(NULL);
+    now_tw = localtime(&now);
+    strftime(forwarted_time, 100, "%H:%M:%S", now_tw);
+    printf("%s - %s", forwarted_time, message);
+    fflush(stdout);
+}
 
 
 void save_config(FILE *file){
@@ -206,5 +223,36 @@ void setup_udp_socket(){
     }
 
 
-    memset()
+    /*colocamos en la estructura las direcciones con las que se vinculara el cliente */
+    memset(&addr_cli, 0, sizeof(struct sockaddr_in));
+    addr_cli.sin_family = AF_INET;
+    addr_cli.sin_addr.s_addr =htonl(INADDR_ANY);
+    addr_cli.sin_port = htons(0);
+
+    /*vinculamos*/
+    if(bind(sockets_udp.udp_socket, (struct sockaddr*) &addr_cli, sizeof(struct sockaddr_in))<0){
+        print_message("ERROR ->Could not bind UDP socket\n");
+        exit(1);
+    }
+
+    /*colocamos en la estructura del servidor las direcciones donde enviaremos los fichero*/
+    memset(&sockets_udp.udp_addr_server, 0, sizeof(struct sockaddr_in));
+    sockets_udp.udp_addr_server.sin_family = AF_INET;
+    sockets_udp.udp_addr_server.sin_addr.s_addr = (((struct in_addr *) ent->h_addr_list[0])->s_addr);
+    sockets_udp.udp_addr_server.sin_port = htons(sockets_udp.udp_port);
+}
+void service(){
+    change_client_state("DISCONNECTED");
+    register_to_server();
+
+}
+void change_client_state(char *newstate){
+    client_state = malloc(sizeof(newstate));
+    strcpy(client_state, newstate);
+    char message[50];
+    sprintf(message, "INFO -> Client_state changed to: %s\n", client_state);
+    print_message(message);
+}
+void register_to_server(){
+    exit(1);
 }
