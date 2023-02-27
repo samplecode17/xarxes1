@@ -30,7 +30,7 @@
 
 /*estructuras*/
 
-struct  ConfigPackage{
+struct ConfigPackage{
     unsigned char pdu_type;
     char id[7];
     char mac_adress[13];
@@ -98,6 +98,9 @@ unsigned char get_packet_type(char *string);
 char *get_packet_string(unsigned char type);
 int get_waiting_time_after_sent(int reg_reqs_sent);
 void send_package_udp_to_server(struct Package package);
+void prepare_receive_package_udp(fd_set rfds, int timeout);
+struct Package receive_package_via_udp(fd_set rfds);
+void save_regiter_ack_data_respo(struct Package recieve_data);
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -261,7 +264,7 @@ void register_to_server(){
     while (unsuccefull_client_signup < O){
         if(debug_mode){
             char message[75];
-            sprintf(message, "DEBUG -> Starting new register process. Current tries: %d / %d \n", client_data.unsuccefull_signup + 1, O);
+            sprintf(message, "DEBUG -> Starting new register process. Current tries: %d / %d \n", unsuccefull_client_signup+ 1, O);
             print_message(message);
         }
 
@@ -269,8 +272,41 @@ void register_to_server(){
             struct Package register_data_required;
             register_data_required = build_register_data_package();
             send_package_udp_to_server(register_data_required);
+            change_client_state("WAIT_REG_RESPONSE");
+            struct Package received_data_server;
+            fd_set rfds;
+            prepare_receive_package_udp(rfds,get_waiting_time_after_sent(request));
+            received_data_server = receive_package_via_udp(rfds);
+            if(received_data_server.pdu_type == get_packet_type("REGISTER_REJ")){
+                change_client_state("DISCONNECTED");
+            }else if(received_data_server.pdu_type == get_packet_type("REGISTER_NACK")){
+                break;
+            }else if(received_data_server.pdu_type == get_packet_type("REGISTER_ACK")){
+                change_client_state("REGISTERED");
+                save_regiter_ack_data_respo(received_data_server);
+                if(debug_mode){
+                    char message[150];
+                    sprintf(message,
+                            "Succefull register fase on server: %s (id: %s, mac: %s, num_ale: %s, tcp_port: %d)\n",
+                            server_data.adress,server_data.id,server_data.mac_a,
+                            server_data.num_ale, sockets_tcp.tcp_port);
+                    print_message(message);
+
+                }
+                return; 
+            }else if(debug_mode){
+                print_message("DEBUG -> No answer received for REGISTER_REQ\n\n");
+                print_message("DEBUG -> Trying to reach server again...\n");
+            }
+            sleep(sockets_udp.udp_timeout.tv_sec);
+            usleep(sockets_udp.udp_timeout.tv_usec);
+             
         }
+        sleep(U);
+        unsuccefull_client_signup++;
     }
+    print_message("ERROR -> Could not contact server. Maximum tries to contact server have been reached\n");
+    exit(1); 
  
 }
 struct Package build_register_data_package(){
@@ -281,64 +317,69 @@ struct Package build_register_data_package(){
     strcpy(register_req.mac_adress, client_data.mac_a);
     strcpy(register_req.num_ale, server_data.num_ale);
     strcpy(register_req.data, "");
+    return register_req;
 }
+
+
 unsigned char get_packet_type(char *string){
     unsigned char packet_type;
-    if(strcmp(string,"REGISTER_REQ")){
+    if(strcmp(string,"REGISTER_REQ")==0){
         packet_type = (unsigned char) 0x00;
-    }else if(strcmp(string,"REGISTER_ACK")){
+    }else if(strcmp(string,"REGISTER_ACK")==0){
         packet_type = (unsigned char) 0x02;
-    }else if(strcmp(string,"REGISTER_NACK")){
+    }else if(strcmp(string,"REGISTER_NACK")==0){
         packet_type = (unsigned char) 0x04;
-    }else if(strcmp(string,"REGISTER_REJ")){
+    }else if(strcmp(string,"REGISTER_REJ")==0){
         packet_type = (unsigned char) 0x06;
-    }else if(strcmp(string,"ERROR")){
+    }else if(strcmp(string,"ERROR")==0){
         packet_type = (unsigned char) 0x0F;
-    }else if(strcmp(string,"DISCONNECTED")){
+    }else if(strcmp(string,"DISCONNECTED")==0){
         packet_type = (unsigned char) 0xA0;
-    }else if(strcmp(string,"WAIT_REG_RESPONSE")){
+    }else if(strcmp(string,"WAIT_REG_RESPONSE")==0){
         packet_type = (unsigned char) 0xA2;
-    }else if(strcmp(string,"WAIT_DB_CHECK")){
+    }else if(strcmp(string,"WAIT_DB_CHECK")==0){
         packet_type = (unsigned char) 0xA4;
-    }else if(strcmp(string,"REGISTERED")){
+    }else if(strcmp(string,"REGISTERED")==0){
         packet_type = (unsigned char) 0xA6;
-    }else if(strcmp(string,"SEND_ALIVE")){
+    }else if(strcmp(string,"SEND_ALIVE")==0){
         packet_type = (unsigned char) 0xA8;
-    }else if(strcmp(string,"ALIVE_INF")){
+    }else if(strcmp(string,"ALIVE_INF")==0){
         packet_type = (unsigned char) 0x10;
-    }else if(strcmp(string,"ALIVE_ACK")){
+    }else if(strcmp(string,"ALIVE_ACK")==0){
         packet_type = (unsigned char) 0x12;
-    }else if(strcmp(string,"ALIVE_NACK")){
+    }else if(strcmp(string,"ALIVE_NACK")==0){
         packet_type = (unsigned char) 0x14;
-    }else if(strcmp(string,"ALIVE_REJ")){
+    }else if(strcmp(string,"ALIVE_REJ")==0){
         packet_type = (unsigned char) 0x16;
-    }else if(strcmp(string,"SEND_FILE")){
+    }else if(strcmp(string,"SEND_FILE")==0){
         packet_type = (unsigned char) 0x20;
-    }else if(strcmp(string,"SEND_DATA")){
+    }else if(strcmp(string,"SEND_DATA")==0){
         packet_type = (unsigned char) 0x22;
-    }else if(strcmp(string,"SEND_ACK")){
+    }else if(strcmp(string,"SEND_ACK")==0){
         packet_type = (unsigned char) 0x24;
-    }else if(strcmp(string,"SEND_NACK")){
+    }else if(strcmp(string,"SEND_NACK")==0){
         packet_type = (unsigned char) 0x26;
-    }else if(strcmp(string,"SEND_REJ")){
+    }else if(strcmp(string,"SEND_REJ")==0){
         packet_type = (unsigned char) 0x28;
-    }else if(strcmp(string,"SEND_END")){
+    }else if(strcmp(string,"SEND_END")==0){
         packet_type = (unsigned char) 0x2A;
-    }else if(strcmp(string, "GET_FILE")){
+    }else if(strcmp(string, "GET_FILE")==0){
         packet_type = (unsigned char) 0x30;
-    }else if(strcmp(string, "GET_DATA")){
+    }else if(strcmp(string, "GET_DATA")==0){
         packet_type = (unsigned char) 0x32;
-    }else if(strcmp(string, "GET_ACK")){
+    }else if(strcmp(string, "GET_ACK")==0){
         packet_type = (unsigned char) 0x34;
-    }else if(strcmp(string, "GET_NACK")){
+    }else if(strcmp(string, "GET_NACK")==0){
         packet_type = (unsigned char) 0x36;
-    }else if(strcmp(string, "GET_REJ")){
+    }else if(strcmp(string, "GET_REJ")==0){
         packet_type = (unsigned char) 0x38;
-    }else if(strcmp(string, "GET_END")){
+    }else if(strcmp(string, "GET_END")==0){
         packet_type = (unsigned char) 0x3A;
     }
     return packet_type;                                                  
 }
+
+
 char *get_packet_string(unsigned char type){
     char *packet;
 
@@ -412,8 +453,8 @@ void send_package_udp_to_server(struct Package package){
 
     char msg[200];
     if(send < 0){
-        sprintf(msg, "ERROR -> Package %s not sent via UDP \n", package.pdu_type);
-        print(msg);
+        sprintf(msg, "ERROR -> Package %s not sent via UDP \n", get_packet_string(package.pdu_type));
+        print_message(msg);
     }else if(debug_mode){
         sprintf(msg,
                 "DEBUG -> Sent %s;\n"
@@ -428,3 +469,47 @@ void send_package_udp_to_server(struct Package package){
         print_message(msg);
     }
 }
+void prepare_receive_package_udp(fd_set rfds, int timeout){
+    FD_ZERO(&rfds);
+    FD_SET(sockets_udp.udp_socket, &rfds);
+    sockets_udp.udp_timeout.tv_sec = timeout;
+    sockets_udp.udp_timeout.tv_usec = 0;
+
+}
+struct Package receive_package_via_udp(fd_set rfds){
+    char *buf = malloc(sizeof(struct Package));
+    struct Package *recieve_package = malloc(sizeof(struct Package));
+    
+    int rec;
+    rec = recvfrom(sockets_udp.udp_socket, buf, sizeof(struct Package), 0,(struct sockaddr *) 0,(socklen_t *) 0);
+    if(rec<0){
+        print_message("ERROR -> Could not recive from UDP socket \n");
+    }else{
+        recieve_package = (struct Package *) buf;
+        if(debug_mode){
+            char mess[200];
+            sprintf(mess,
+                    "DEBUG -> Sent %s;\n"
+                    "\t\t\t Bytes:%lu,\n"
+                    "\t\t\t id:%s,\n"
+                    "\t\t\t MAC: %s,\n"
+                    "\t\t\t num ale:%s\n"
+                    "\t\t\t data:%s\n",
+                    get_packet_string((unsigned char)(*recieve_package).pdu_type),
+                    sizeof(*recieve_package), (*recieve_package).id, 
+                    (*recieve_package).mac_adress, (*recieve_package).num_ale,
+                    (*recieve_package).data);
+            print_message(mess);
+        }
+    }       
+        
+    return *recieve_package;
+
+}
+void save_regiter_ack_data_respo(struct Package recieve_data){
+    strcpy(server_data.num_ale,recieve_data.num_ale);
+    strcpy(server_data.mac_a,recieve_data.mac_adress);
+    strcpy(server_data.id,recieve_data.id);
+    sockets_tcp.tcp_port=atoi(recieve_data.data);
+}
+
