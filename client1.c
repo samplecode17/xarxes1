@@ -82,6 +82,7 @@ struct Server server_data;
 struct Sockets_UDP sockets_udp;
 struct Sockets_TCP sockets_tcp;
 char *client_state = NULL;
+pthread_t thread_comm;
 
 
 /*function declarations*/
@@ -251,6 +252,9 @@ void setup_udp_socket(){
 void service(){
     change_client_state("DISCONNECTED");
     register_to_server();
+
+
+    pthread_create(&thread_comm,NULL,command_input,NULL);
 
 }
 void change_client_state(char *newstate){
@@ -513,3 +517,30 @@ void save_regiter_ack_data_respo(struct Package recieve_data){
     sockets_tcp.tcp_port=atoi(recieve_data.data);
 }
 
+void *command_input(){
+    while(1){
+        int max_char_can_read = 50;
+        char buffer[max_char_can_read];
+        if(fgets(buffer, max_char_can_read, stdin) != NULL){
+            buffer[strcspn(buffer, "\n")] = '0';
+        }
+        char *c_buff = malloc(max_char_can_read);
+        strcpy(c_buff,buffer);
+
+        if(strcmp(c_buff,"send-cfg")){
+
+        }else if(strcmp(c_buff,"get-cfg")){
+
+        }else if(strcmp(c_buff,"quit")){
+
+        }else{
+            char message[150];
+            sprintf(message, "ERROR -> %s is not an accepted command\n", c_buff);
+            print_message(message);
+            print_message("INFO  -> Accepted commands are: \n");
+            printf("\t\t    send-cfg -> sends conf file to server via TCP\n");
+            printf("\t\t    get-cfg -> receive conf from server via TCP and save the conf on file");
+            printf("\t\t    quit -> finishes client\n");
+        }
+    }
+}
