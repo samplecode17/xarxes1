@@ -553,7 +553,8 @@ void *command_input(){
 
 
 void *mantain_comunication(){
-    return NULL;
+    int failed_recived_ack =0;
+    return NULL; 
 }
 
 
