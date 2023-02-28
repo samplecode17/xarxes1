@@ -105,6 +105,8 @@ struct Package receive_package_via_udp(fd_set rfds);
 void save_regiter_ack_data_respo(struct Package recieve_data);
 void *command_input();
 void *mantain_comunication();
+struct Package build_alive_inf_tosend_package();
+bool check_received_package_ack_is_valid(struct Package package);
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -553,8 +555,75 @@ void *command_input(){
 
 
 void *mantain_comunication(){
-    int failed_recived_ack =0;
+    int failed_recived_ack=0;
+    while(1){
+        struct Package alive_if_to_send= build_alive_inf_tosend_package();
+        send_package_udp_to_server(alive_if_to_send);
+        fd_set rfds;
+        prepare_receive_package_udp(rfds,R);
+        struct Package received_package_via_udp = receive_package_via_udp(rfds);
+        sleep(sockets_udp.udp_timeout.tv_sec);
+        usleep(sockets_udp.udp_timeout.tv_usec);
+
+
+
+        if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_ACK")){
+            if(check_received_package_ack_is_valid(received_package_via_udp)){
+                if (strcmp(client_state, "ALIVE") != 0) { change_client_state("ALIVE"); }
+                failed_recived_ack = 0;
+            }else{
+                failed_recived_ack++;
+                if(debug_mode){
+                    char msg[200];
+                    sprintf(msg,
+                            "DEBUG -> Received incorrect ALIVE_ACK package. Incorrect pdu-fields"
+                            "received.\n"
+                            "Correct pdu-fields :(id: %s ,mac: %s, num_ale: %s)\n\n",
+                             server_data.id, server_data.mac_a, server_data.num_ale);
+                    print_message(msg);         
+                }
+            }
+        }else if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_REJ") && strcmp(client_state, "ALIVE")==0){
+            print_message("INFO  -> Potential impersonation Got ALIVE_REJ package when state was ALIVE\n");
+            pthread_cancel(thread_comm); /* cancel thread reading from command line */
+            unsuccefull_client_signup++;
+            service();
+            break;
+        }else{
+            failed_recived_ack++;
+            if (debug_mode) {
+                char msg[150];
+                sprintf(msg, "DEBUG -> Have not received ALIVE_ACK. Current tries %d / %d\n\n",
+                        failed_recived_ack, S);
+                print_message(msg);
+            }
+        }
+
+        if(failed_recived_ack == S){
+            print_message("ERROR -> Maximum tries to contact server without valid ALIVE_ACK received reached\n");
+            pthread_cancel(thread_comm);
+            unsuccefull_client_signup++;
+            service();
+            break;
+        }
+
+    }
     return NULL; 
 }
 
+struct Package build_alive_inf_tosend_package(){
+    struct Package alive_inf_to_sent_package;
+    alive_inf_to_sent_package.pdu_type = get_packet_type("ALIVE_INF");
+    strcpy(alive_inf_to_sent_package.id, client_data.id);
+    strcpy(alive_inf_to_sent_package.mac_adress, client_data.mac_a);
+    strcpy(alive_inf_to_sent_package.num_ale, server_data.num_ale);
+    strcpy(alive_inf_to_sent_package.data, "");
 
+    return alive_inf_to_sent_package;
+}
+
+bool check_received_package_ack_is_valid(struct Package package){
+    return (strcmp(server_data.id, package.id) == 0 &&
+            strcmp(server_data.mac_a, package.mac_adress) == 0 &&
+            strcmp(server_data.num_ale, package.num_ale) == 0);
+}
