@@ -92,6 +92,7 @@ void print_message(char *message);
 void save_config(FILE *file);
 void setup_udp_socket();
 void service();
+void registration();
 void change_client_state(char *newstate);
 void register_to_server();
 struct Package build_register_data_package();
@@ -102,6 +103,8 @@ void send_package_udp_to_server(struct Package package);
 void prepare_receive_package_udp(fd_set rfds, int timeout);
 struct Package receive_package_via_udp(fd_set rfds);
 void save_regiter_ack_data_respo(struct Package recieve_data);
+void *command_input();
+void *mantain_comunication();
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -249,13 +252,16 @@ void setup_udp_socket(){
     sockets_udp.udp_addr_server.sin_addr.s_addr = (((struct in_addr *) ent->h_addr_list[0])->s_addr);
     sockets_udp.udp_addr_server.sin_port = htons(sockets_udp.udp_port);
 }
+
 void service(){
+    //the register to server
+    registration();
+    pthread_create(&thread_comm,NULL,command_input,NULL);
+    mantain_comunication();
+}
+void registration(){
     change_client_state("DISCONNECTED");
     register_to_server();
-
-
-    pthread_create(&thread_comm,NULL,command_input,NULL);
-
 }
 void change_client_state(char *newstate){
     client_state = malloc(sizeof(newstate));
@@ -544,3 +550,10 @@ void *command_input(){
         }
     }
 }
+
+
+void *mantain_comunication(){
+    return NULL;
+}
+
+
