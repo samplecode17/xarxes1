@@ -107,6 +107,9 @@ void *command_input();
 void *mantain_comunication();
 struct Package build_alive_inf_tosend_package();
 bool check_received_package_ack_is_valid(struct Package package);
+void setup_tcp_socket();
+struct ConfigPackage build_Sent_file();
+void send_package_tcp_to_server(struct ConfigPackage package);
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -626,4 +629,93 @@ bool check_received_package_ack_is_valid(struct Package package){
     return (strcmp(server_data.id, package.id) == 0 &&
             strcmp(server_data.mac_a, package.mac_adress) == 0 &&
             strcmp(server_data.num_ale, package.num_ale) == 0);
+}
+void execute_send_cfg(){
+    print_message("INFO-> Sending configuration file to server\n");
+
+    if(access(network_dev_config_file_name, F_OK) == -1){
+        char msg[200];
+        sprintf(msg, "FAULT -> The access to the file %s failed \n", network_dev_config_file_name);
+        print_message(msg);
+        close(sockets_tcp.tcp_socket);
+        return;
+
+    }
+    FILE *config_file = fopen(network_dev_config_file_name, "r");
+    setup_tcp_socket();
+    struct ConfigPackage receive_package = build_Sent_file(config_file);
+
+
+}
+void setup_tcp_socket(){
+    struct hostent *host;
+
+
+    host = gethostbyname(server_data.adress);
+    if(!host){
+        print_message("ERROR -> Can't find server!! \n");
+    }
+
+    sockets_tcp.tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if(sockets_tcp.tcp_socket < 0){
+        print_message("ERROR -> Could not create TCP socket\n");
+        exit(1);
+    }
+
+
+    memset(&sockets_tcp.tcp_addr_server,0,sizeof(struct sockaddr_in));
+    sockets_tcp.tcp_addr_server.sin_family  = AF_INET;
+    sockets_tcp.tcp_addr_server.sin_addr.s_addr = (((struct in_addr *) host->h_addr_list[0])->s_addr);
+    sockets_tcp.tcp_addr_server.sin_port = htons(sockets_tcp.tcp_port);
+
+
+    if(connect(sockets_tcp.tcp_socket, (struct sockaddr *) &sockets_tcp.tcp_addr_server, sizeof(sockets_tcp.tcp_addr_server)) >0){
+        print_message("ERROR -> Could not bind and connect to TCP socket\n");
+        exit(1);
+    }
+
+}
+struct ConfigPackage build_Sent_file(FILE *file){
+    struct  ConfigPackage send_file;
+    char data[150];
+    long filesize;
+
+    send_file.pdu_type = get_packet_type("SEND_FILE");
+    strcpy(send_file.id, client_data.id);
+    strcpy(send_file.mac_adress, client_data.mac_a);
+    strcpy(send_file.num_ale, server_data.num_ale);
+
+
+
+    fseek(file, 0, SEEK_END);
+    filesize = ftell(file);
+    fseek(file, 0, SEEK_SET);
+    printf(data, "%s,%li", network_dev_config_file_name, filesize);
+    strcpy(send_file.data, data);
+
+    return send_file;
+}
+
+void send_package_tcp_to_server(struct ConfigPackage package){
+    int send_ = send(sockets_tcp.tcp_socket, &package, sizeof(package), 0);
+    char msg[200];
+
+    if(send_ < 0){
+        print_message("ERROR -> Could not send package via TCP socket\n");
+
+    }else if(debug_mode){
+        sprintf(msg,
+                "DEBUG -> Sent %s;\n"
+                "\t\t\t Bytes:%lu,\n"
+                "\t\t\t id:%s,\n"
+                "\t\t\t MAC: %s,\n"
+                "\t\t\t num ale:%s\n"
+                "\t\t\t data:%s\n",
+                get_packet_string(package.pdu_type), sizeof(package),
+                package.id, package.mac_adress, package.num_ale,   
+                package.data);
+        print_message(msg);
+    }
+
+
 }
