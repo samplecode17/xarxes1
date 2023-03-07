@@ -24,7 +24,7 @@
 #define O 2
 #define R 2
 #define S 3
-
+#define W 3
 
 
 
@@ -86,7 +86,7 @@ pthread_t thread_comm;
 
 
 /*function declarations*/
-void end(int signal);
+void end(int signal);               
 void config_from_file(int argc, const char *argv[]);
 void print_message(char *message);
 void save_config(FILE *file);
@@ -101,7 +101,7 @@ char *get_packet_string(unsigned char type);
 int get_waiting_time_after_sent(int reg_reqs_sent);
 void send_package_udp_to_server(struct Package package);
 void prepare_receive_package_udp(fd_set rfds, int timeout);
-struct Package receive_package_via_udp(fd_set rfds);
+struct Package receive_package_via_udp();
 void save_regiter_ack_data_respo(struct Package recieve_data);
 void *command_input();
 void *mantain_comunication();
@@ -110,6 +110,8 @@ bool check_received_package_ack_is_valid(struct Package package);
 void setup_tcp_socket();
 struct ConfigPackage build_Sent_file();
 void send_package_tcp_to_server(struct ConfigPackage package);
+void prepare_receive_package_tcp(fd_set rfds, int timeout);
+struct ConfigPackage receive_package_via_tcp();
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -291,7 +293,7 @@ void register_to_server(){
             struct Package received_data_server;
             fd_set rfds;
             prepare_receive_package_udp(rfds,get_waiting_time_after_sent(request));
-            received_data_server = receive_package_via_udp(rfds);
+            received_data_server = receive_package_via_udp();
             if(received_data_server.pdu_type == get_packet_type("REGISTER_REJ")){
                 change_client_state("DISCONNECTED");
             }else if(received_data_server.pdu_type == get_packet_type("REGISTER_NACK")){
@@ -491,7 +493,7 @@ void prepare_receive_package_udp(fd_set rfds, int timeout){
     sockets_udp.udp_timeout.tv_usec = 0;
 
 }
-struct Package receive_package_via_udp(fd_set rfds){
+struct Package receive_package_via_udp(){
     char *buf = malloc(sizeof(struct Package));
     struct Package *recieve_package = malloc(sizeof(struct Package));
     
@@ -564,7 +566,7 @@ void *mantain_comunication(){
         send_package_udp_to_server(alive_if_to_send);
         fd_set rfds;
         prepare_receive_package_udp(rfds,R);
-        struct Package received_package_via_udp = receive_package_via_udp(rfds);
+        struct Package received_package_via_udp = receive_package_via_udp();
         sleep(sockets_udp.udp_timeout.tv_sec);
         usleep(sockets_udp.udp_timeout.tv_usec);
 
@@ -643,7 +645,15 @@ void execute_send_cfg(){
     }
     FILE *config_file = fopen(network_dev_config_file_name, "r");
     setup_tcp_socket();
-    struct ConfigPackage receive_package = build_Sent_file(config_file);
+    struct ConfigPackage send_file = build_Sent_file(config_file);
+    send_package_tcp_to_server(send_file);
+
+
+    fd_set rfds;
+
+    prepare_receive_package_tcp(rfds, W);
+
+    struct ConfigPackage recived_package = receive_package_via_tcp(rfds);
 
 
 }
@@ -673,6 +683,8 @@ void setup_tcp_socket(){
         print_message("ERROR -> Could not bind and connect to TCP socket\n");
         exit(1);
     }
+
+
 
 }
 struct ConfigPackage build_Sent_file(FILE *file){
@@ -718,4 +730,37 @@ void send_package_tcp_to_server(struct ConfigPackage package){
     }
 
 
+}
+
+
+
+void prepare_receive_package_tcp(fd_set rfds, int timeout){
+    FD_ZERO(&rfds);
+    FD_SET(sockets_udp.udp_socket, &rfds);
+    sockets_tcp.tcp_timeout.tv_sec = timeout;
+}
+struct ConfigPackage receive_package_via_tcp(){
+    char *buf = malloc(sizeof(struct ConfigPackage));
+    struct ConfigPackage *recieve_package = malloc(sizeof(struct ConfigPackage));
+
+
+    int rec = recv(sockets_tcp.tcp_socket, buf, sizeof(buf), 0);
+    if(rec < 0){
+        recieve_package = (struct Package *) buf;
+        if (debug_mode){
+            char message[280];
+            sprintf(message,
+                    "DEBUG -> \t\t Received %s;\n"
+                    "\t\t\t\t\t  Bytes:%lu,\n"
+                    "\t\t\t\t\t  name:%s,\n "
+                    "\t\t\t\t\t  mac:%s,\n"
+                    "\t\t\t\t\t  rand num:%s,\n"
+                    "\t\t\t\t\t  data:%s\n\n",
+                    get_packet_string_from_type((unsigned char) (*recieve_package).pdu_type),
+                    sizeof(*recieve_package), (*recieve_package).id,
+                    (*recieve_package).mac_adress, (*recieve_package).num_ale,
+                    (*recieve_package).data);
+            print_message(message);
+        }
+    }
 }
