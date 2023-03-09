@@ -106,12 +106,14 @@ void save_regiter_ack_data_respo(struct Package recieve_data);
 void *command_input();
 void *mantain_comunication();
 struct Package build_alive_inf_tosend_package();
-bool check_received_package_ack_is_valid(struct Package package);
+bool check_received_package_ack_is_valid_udp(struct Package package);
 void setup_tcp_socket();
 struct ConfigPackage build_Sent_file();
 void send_package_tcp_to_server(struct ConfigPackage package);
 void prepare_receive_package_tcp(fd_set rfds, int timeout);
 struct ConfigPackage receive_package_via_tcp();
+bool check_received_package_ack_is_valid_tcp(struct ConfigPackage received, unsigned char expected_type);
+struct ConfigPackage build_send_end();
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -573,7 +575,7 @@ void *mantain_comunication(){
 
 
         if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_ACK")){
-            if(check_received_package_ack_is_valid(received_package_via_udp)){
+            if(check_received_package_ack_is_valid_udp(received_package_via_udp)){
                 if (strcmp(client_state, "ALIVE") != 0) { change_client_state("ALIVE"); }
                 failed_recived_ack = 0;
             }else{
@@ -627,7 +629,7 @@ struct Package build_alive_inf_tosend_package(){
     return alive_inf_to_sent_package;
 }
 
-bool check_received_package_ack_is_valid(struct Package package){
+bool check_received_package_ack_is_valid_udp(struct Package package){
     return (strcmp(server_data.id, package.id) == 0 &&
             strcmp(server_data.mac_a, package.mac_adress) == 0 &&
             strcmp(server_data.num_ale, package.num_ale) == 0);
@@ -653,7 +655,39 @@ void execute_send_cfg(){
 
     prepare_receive_package_tcp(rfds, W);
 
-    struct ConfigPackage recived_package = receive_package_via_tcp(rfds);
+    struct ConfigPackage recived_package = receive_package_via_tcp();
+
+
+    if(sockets_tcp.tcp_timeout.tv_sec == 0){
+        if (debug_mode){
+            print_message("ERROR -> No answer received for send-cfg package\n"); 
+        }
+        close(sockets_tcp.tcp_socket);
+        fclose(config_file);
+        return;
+    }else if(!check_received_package_ack_is_valid_tcp(recived_package,get_packet_type("SEND_ACK"))){
+        if (debug_mode) { 
+            print_message("ERROR -> Wrong package received for SEND_FILE package sent\n"); 
+        }
+        close(sockets_tcp.tcp_socket);
+        fclose(config_file);
+        return;
+    }
+
+
+
+
+    char line[150];
+    while(fgets(line, 150, config_file)) {
+        struct ConfigPackage send_data = build_Sent_file(line);
+        send_package_tcp_to_server(send_data);
+    }
+
+    struct ConfigPackage send_end = build_send_end();
+    send_package_tcp_to_server(send_end);
+    close(sockets_tcp.tcp_socket);
+    fclose(config_file);
+    print_message("INFO -> Successfully ended sending configuration file to server\n");
 
 
 }
@@ -738,6 +772,8 @@ void prepare_receive_package_tcp(fd_set rfds, int timeout){
     FD_ZERO(&rfds);
     FD_SET(sockets_udp.udp_socket, &rfds);
     sockets_tcp.tcp_timeout.tv_sec = timeout;
+
+
 }
 struct ConfigPackage receive_package_via_tcp(){
     char *buf = malloc(sizeof(struct ConfigPackage));
@@ -746,7 +782,7 @@ struct ConfigPackage receive_package_via_tcp(){
 
     int rec = recv(sockets_tcp.tcp_socket, buf, sizeof(buf), 0);
     if(rec < 0){
-        recieve_package = (struct Package *) buf;
+        recieve_package = (struct ConfigPackage *) buf;
         if (debug_mode){
             char message[280];
             sprintf(message,
@@ -756,11 +792,41 @@ struct ConfigPackage receive_package_via_tcp(){
                     "\t\t\t\t\t  mac:%s,\n"
                     "\t\t\t\t\t  rand num:%s,\n"
                     "\t\t\t\t\t  data:%s\n\n",
-                    get_packet_string_from_type((unsigned char) (*recieve_package).pdu_type),
+                    get_packet_string((unsigned char) (*recieve_package).pdu_type),
                     sizeof(*recieve_package), (*recieve_package).id,
                     (*recieve_package).mac_adress, (*recieve_package).num_ale,
                     (*recieve_package).data);
             print_message(message);
         }
     }
+
+    return *recieve_package;
+}
+bool check_received_package_ack_is_valid_tcp(struct ConfigPackage received, unsigned char expected_type){
+    if(expected_type == get_packet_type("GET_END")){
+        return( expected_type == received.pdu_type &&
+                strcmp(server_data.id, received.id) == 0 &&
+                strcmp(server_data.mac_a, received.mac_adress) == 0 &&
+                strcmp(server_data.num_ale, received.num_ale) == 0 &&
+                strcmp("", received.data) == 0);
+    }
+
+
+    return( expected_type == received.pdu_type &&
+                strcmp(server_data.id, received.id) == 0 &&
+                strcmp(server_data.mac_a, received.mac_adress) == 0 &&
+                strcmp(server_data.num_ale, received.num_ale) == 0);
+}
+
+struct ConfigPackage build_send_end() {
+    struct ConfigPackage send_end;
+
+    /* start filling Package */
+    send_end.pdu_type = get_packet_type("SEND_END");
+    strcpy(send_end.id, client_data.id);
+    strcpy(send_end.mac_adress, client_data.mac_a);
+    strcpy(send_end.num_ale, server_data.num_ale);
+    strcpy(send_end.data, "");
+
+    return send_end;
 }
