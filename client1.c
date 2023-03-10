@@ -107,6 +107,7 @@ void *command_input();
 void *mantain_comunication();
 struct Package build_alive_inf_tosend_package();
 bool check_received_package_ack_is_valid_udp(struct Package package);
+void execute_send_cfg();
 void setup_tcp_socket();
 struct ConfigPackage build_Sent_file();
 void send_package_tcp_to_server(struct ConfigPackage package);
@@ -114,6 +115,8 @@ void prepare_receive_package_tcp(fd_set rfds, int timeout);
 struct ConfigPackage receive_package_via_tcp();
 bool check_received_package_ack_is_valid_tcp(struct ConfigPackage received, unsigned char expected_type);
 struct ConfigPackage build_send_end();
+struct ConfigPackage build_get_confg(FILE *config_file);
+void execute_get_cfg();
 
 /*main*/
 int main(int argc, const char *argv[]){
@@ -125,6 +128,8 @@ int main(int argc, const char *argv[]){
     config_from_file(argc,argv);
     setup_udp_socket();
     service();
+
+    return 0;
 }
 
 
@@ -537,17 +542,18 @@ void *command_input(){
         int max_char_can_read = 50;
         char buffer[max_char_can_read];
         if(fgets(buffer, max_char_can_read, stdin) != NULL){
-            buffer[strcspn(buffer, "\n")] = '0';
+            buffer[strcspn(buffer, "\n")] = '\0';
         }
         char *c_buff = malloc(max_char_can_read);
         strcpy(c_buff,buffer);
 
+
         if(strcmp(c_buff,"send-cfg")){
-
+            execute_send_cfg();
         }else if(strcmp(c_buff,"get-cfg")){
-
+            execute_get_cfg();
         }else if(strcmp(c_buff,"quit")){
-
+            end(SIGINT);
         }else{
             char message[150];
             sprintf(message, "ERROR -> %s is not an accepted command\n", c_buff);
@@ -574,11 +580,12 @@ void *mantain_comunication(){
 
 
 
-        if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_ACK")){
-            if(check_received_package_ack_is_valid_udp(received_package_via_udp)){
+        if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_ACK") && 
+                check_received_package_ack_is_valid_udp(received_package_via_udp)){
                 if (strcmp(client_state, "ALIVE") != 0) { change_client_state("ALIVE"); }
                 failed_recived_ack = 0;
-            }else{
+        }else if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_ACK") && 
+                 !check_received_package_ack_is_valid_udp(received_package_via_udp)){
                 failed_recived_ack++;
                 if(debug_mode){
                     char msg[200];
@@ -589,7 +596,6 @@ void *mantain_comunication(){
                              server_data.id, server_data.mac_a, server_data.num_ale);
                     print_message(msg);         
                 }
-            }
         }else if(received_package_via_udp.pdu_type == get_packet_type("ALIVE_REJ") && strcmp(client_state, "ALIVE")==0){
             print_message("INFO  -> Potential impersonation Got ALIVE_REJ package when state was ALIVE\n");
             pthread_cancel(thread_comm); /* cancel thread reading from command line */
@@ -829,4 +835,92 @@ struct ConfigPackage build_send_end() {
     strcpy(send_end.data, "");
 
     return send_end;
+}
+
+void execute_get_cfg(){
+    print_message("INFO -> Requested reception of configuration file from server\n");
+
+    FILE *config_file = fopen(network_dev_config_file_name, "w");
+    if(config_file == NULL){
+        char msg[200];
+        sprintf(msg, "ERROR -> File %s cannot be written\n", network_dev_config_file_name);
+        print_message(msg);
+        print_message("ERROR -> Unable to get configuration file from server\n");
+        close(sockets_tcp.tcp_socket);
+        return;
+    }
+    setup_tcp_socket();
+    struct ConfigPackage get_package = build_get_confg(config_file);
+    send_package_tcp_to_server(get_package);
+
+    fd_set rfds;
+
+    prepare_receive_package_tcp(rfds, W);
+
+    struct ConfigPackage recived_package = receive_package_via_tcp();
+
+    if(sockets_tcp.tcp_timeout.tv_sec == 0){
+        if (debug_mode) {print_message("ERROR -> No answer received for GET_FILE package sent\n");}
+        close(sockets_tcp.tcp_socket);
+        fclose(config_file);
+        return;
+    } else if(!check_received_package_ack_is_valid_tcp(recived_package, get_packet_type("GET_ACK"))){
+        if (debug_mode) { print_message("ERROR -> Wrong package received for GET_FILE package sent\n"); }
+        close(sockets_tcp.tcp_socket);
+        fclose(config_file);
+        return;
+    }
+
+    while(recived_package.pdu_type != get_packet_type("GET_END")){
+        
+        fd_set rfds1;
+        prepare_receive_package_tcp(rfds1, W);
+
+        recived_package = receive_package_via_tcp();
+        if(sockets_tcp.tcp_timeout.tv_sec == 0){
+            if(debug_mode){
+                char message[150];
+                sprintf(message, "ERROR -> Have not received any data on TCP socket during %d seconds\n", W);
+                print_message(message);
+            }
+            close(sockets_tcp.tcp_socket);
+            fclose(config_file);
+            return;
+        } else if(!check_received_package_ack_is_valid_tcp(recived_package, get_packet_type("GET_DATA")) && 
+                  !check_received_package_ack_is_valid_tcp(recived_package, get_packet_type("GET_END"))) {
+            if(debug_mode){
+                print_message("ERROR -> Wrong package GET_DATA or GET_END received from server\n");
+            }
+            close(sockets_tcp.tcp_socket);
+            fclose(config_file);
+            return;
+
+        }
+        fputs(recived_package.data, config_file);
+    }
+    close(sockets_tcp.tcp_socket);
+    fclose(config_file);
+    print_message("INFO -> Successfully ended reception of configuration file from server\n");
+}
+
+struct ConfigPackage build_get_confg(FILE *config_file){
+    struct ConfigPackage get_file;
+    char data[150];
+    long filesize;
+
+
+    get_file.pdu_type = get_packet_type("GET_FILE");
+    strcpy(get_file.id, client_data.id);
+    strcpy(get_file.mac_adress, client_data.mac_a);
+    strcpy(get_file.num_ale, server_data.num_ale);
+
+
+    fseek(config_file,0,SEEK_END);
+    filesize = ftell(config_file);
+    fseek(config_file,0,SEEK_SET);
+
+    sprintf(data, "%s,%li", network_dev_config_file_name, filesize);
+    strcpy(get_file.data, data);
+
+    return get_file;
 }
