@@ -951,7 +951,7 @@ def get_packet_type_from_string(string):
 
 if __name__ == '__main__':
     try:
-        
+        commands()
         read_and_save_argv(sys.argv)
         setup_sockets()
         
@@ -964,7 +964,7 @@ if __name__ == '__main__':
         
     except(KeyboardInterrupt, SystemExit):
         # close client conf sockets (if any in use)
-        commands()
+        
         lock_clients_data.acquire()
         for client in valid_clients_data:
             if client.conf_tcp_socket is not None:
