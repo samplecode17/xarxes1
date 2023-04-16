@@ -82,7 +82,7 @@ struct Server server_data;
 struct Sockets_UDP sockets_udp;
 struct Sockets_TCP sockets_tcp;
 char *client_state = NULL;
-pthread_t thread_comm;
+pthread_t thread_comm = (pthread_t) NULL;
 
 
 /*function declarations*/
@@ -100,8 +100,7 @@ unsigned char get_packet_type(char *string);
 char *get_packet_string(unsigned char type);
 int get_waiting_time_after_sent(int reg_reqs_sent);
 void send_package_udp_to_server(struct Package package);
-void prepare_receive_package_udp(fd_set rfds, int timeout);
-struct Package receive_package_via_udp();
+struct Package receive_package_via_udp(int timeout);
 void save_regiter_ack_data_respo(struct Package recieve_data);
 void *command_input();
 void *mantain_comunication();
@@ -111,8 +110,7 @@ void execute_send_cfg();
 void setup_tcp_socket();
 struct ConfigPackage build_Sent_file();
 void send_package_tcp_to_server(struct ConfigPackage package);
-void prepare_receive_package_tcp(fd_set rfds, int timeout);
-struct ConfigPackage receive_package_via_tcp();
+struct ConfigPackage receive_package_via_tcp(int timeout);
 bool check_received_package_ack_is_valid_tcp(struct ConfigPackage received, unsigned char expected_type);
 struct ConfigPackage build_send_end();
 struct ConfigPackage build_get_confg(FILE *config_file);
@@ -298,9 +296,7 @@ void register_to_server(){
             send_package_udp_to_server(register_data_required);
             change_client_state("WAIT_REG_RESPONSE");
             struct Package received_data_server;
-            fd_set rfds;
-            prepare_receive_package_udp(rfds,get_waiting_time_after_sent(request));
-            received_data_server = receive_package_via_udp();
+            received_data_server = receive_package_via_udp(get_waiting_time_after_sent(request));
             if(received_data_server.pdu_type == get_packet_type("REGISTER_REJ")){
                 change_client_state("DISCONNECTED");
             }else if(received_data_server.pdu_type == get_packet_type("REGISTER_NACK")){
@@ -493,39 +489,42 @@ void send_package_udp_to_server(struct Package package){
         print_message(msg);
     }
 }
-void prepare_receive_package_udp(fd_set rfds, int timeout){
+struct Package receive_package_via_udp(int timeout){
+    fd_set rfds;
+
+    char *buf = malloc(sizeof(struct Package));
+    struct Package *recieve_package = malloc(sizeof(struct Package));
+
     FD_ZERO(&rfds);
     FD_SET(sockets_udp.udp_socket, &rfds);
     sockets_udp.udp_timeout.tv_sec = timeout;
     sockets_udp.udp_timeout.tv_usec = 0;
 
-}
-struct Package receive_package_via_udp(){
-    char *buf = malloc(sizeof(struct Package));
-    struct Package *recieve_package = malloc(sizeof(struct Package));
-    
-    int rec;
-    rec = recvfrom(sockets_udp.udp_socket, buf, sizeof(struct Package), 0,(struct sockaddr *) 0,(socklen_t *) 0);
-    if(rec<0){
-        print_message("ERROR -> Could not recive from UDP socket \n");
-    }else{
-        recieve_package = (struct Package *) buf;
-        if(debug_mode){
-            char mess[200];
-            sprintf(mess,
-                    "DEBUG -> Sent %s;\n"
-                    "\t\t\t Bytes:%lu,\n"
-                    "\t\t\t id:%s,\n"
-                    "\t\t\t MAC: %s,\n"
-                    "\t\t\t num ale:%s\n"
-                    "\t\t\t data:%s\n",
-                    get_packet_string((unsigned char)(*recieve_package).pdu_type),
-                    sizeof(*recieve_package), (*recieve_package).id, 
-                    (*recieve_package).mac_adress, (*recieve_package).num_ale,
-                    (*recieve_package).data);
-            print_message(mess);
-        }
-    }       
+    if(select(sockets_udp.udp_socket + 1, &rfds, NULL, NULL, &sockets_udp.udp_timeout)){
+        int rec;
+        rec = recvfrom(sockets_udp.udp_socket, buf, sizeof(struct Package), 0,(struct sockaddr *) 0,(socklen_t *) 0);
+        if(rec<0){
+            print_message("ERROR -> Could not recive from UDP socket \n");
+        }else{
+            recieve_package = (struct Package *) buf;
+            if(debug_mode){
+                char mess[200];
+                sprintf(mess,
+                        "DEBUG -> Sent %s;\n"
+                        "\t\t\t Bytes:%lu,\n"
+                        "\t\t\t id:%s,\n"
+                        "\t\t\t MAC: %s,\n"
+                        "\t\t\t num ale:%s\n"
+                        "\t\t\t data:%s\n",
+                        get_packet_string((unsigned char)(*recieve_package).pdu_type),
+                        sizeof(*recieve_package), (*recieve_package).id, 
+                        (*recieve_package).mac_adress, (*recieve_package).num_ale,
+                        (*recieve_package).data);
+                print_message(mess);
+            }
+        } 
+    }
+          
         
     return *recieve_package;
 
@@ -537,16 +536,21 @@ void save_regiter_ack_data_respo(struct Package recieve_data){
     sockets_tcp.tcp_port=atoi(recieve_data.data);
 }
 
-void *command_input(){
-    while(1){
-        int max_char_can_read = 50;
-        char buffer[max_char_can_read];
+char *read_from_stdin(int max_char_can_read){
+    char buffer[max_char_can_read];
         if(fgets(buffer, max_char_can_read, stdin) != NULL){
             buffer[strcspn(buffer, "\n")] = '\0';
         }
         char *c_buff = malloc(max_char_can_read);
         strcpy(c_buff,buffer);
+        return c_buff;
+}
 
+void *command_input(){
+    while(1){
+        int max_char_can_read = 50;
+        
+        char *c_buff = read_from_stdin(max_char_can_read);
 
         if(strcmp(c_buff,"send-cfg")){
             execute_send_cfg();
@@ -572,9 +576,7 @@ void *mantain_comunication(){
     while(1){
         struct Package alive_if_to_send= build_alive_inf_tosend_package();
         send_package_udp_to_server(alive_if_to_send);
-        fd_set rfds;
-        prepare_receive_package_udp(rfds,R);
-        struct Package received_package_via_udp = receive_package_via_udp();
+        struct Package received_package_via_udp = receive_package_via_udp(get_waiting_time_after_sent(R));
         sleep(sockets_udp.udp_timeout.tv_sec);
         usleep(sockets_udp.udp_timeout.tv_usec);
 
@@ -657,11 +659,8 @@ void execute_send_cfg(){
     send_package_tcp_to_server(send_file);
 
 
-    fd_set rfds;
 
-    prepare_receive_package_tcp(rfds, W);
-
-    struct ConfigPackage recived_package = receive_package_via_tcp();
+    struct ConfigPackage recived_package = receive_package_via_tcp(get_waiting_time_after_sent(W));
 
 
     if(sockets_tcp.tcp_timeout.tv_sec == 0){
@@ -772,41 +771,39 @@ void send_package_tcp_to_server(struct ConfigPackage package){
 
 }
 
-
-
-void prepare_receive_package_tcp(fd_set rfds, int timeout){
-    FD_ZERO(&rfds);
-    FD_SET(sockets_udp.udp_socket, &rfds);
-    sockets_tcp.tcp_timeout.tv_sec = timeout;
-
-
-}
-struct ConfigPackage receive_package_via_tcp(){
+struct ConfigPackage receive_package_via_tcp(int timeout){
+    fd_set rfds;
     char *buf = malloc(sizeof(struct ConfigPackage));
     struct ConfigPackage *recieve_package = malloc(sizeof(struct ConfigPackage));
 
+    FD_ZERO(&rfds);
+    FD_SET(sockets_tcp.tcp_socket, &rfds);
+    sockets_tcp.tcp_timeout.tv_sec = timeout;
 
-    int rec = recv(sockets_tcp.tcp_socket, buf, sizeof(buf), 0);
-    if(rec < 0){
-        recieve_package = (struct ConfigPackage *) buf;
-        if (debug_mode){
-            char message[280];
-            sprintf(message,
-                    "DEBUG -> \t\t Received %s;\n"
-                    "\t\t\t\t\t  Bytes:%lu,\n"
-                    "\t\t\t\t\t  name:%s,\n "
-                    "\t\t\t\t\t  mac:%s,\n"
-                    "\t\t\t\t\t  rand num:%s,\n"
-                    "\t\t\t\t\t  data:%s\n\n",
-                    get_packet_string((unsigned char) (*recieve_package).pdu_type),
-                    sizeof(*recieve_package), (*recieve_package).id,
-                    (*recieve_package).mac_adress, (*recieve_package).num_ale,
-                    (*recieve_package).data);
-            print_message(message);
+    if(select(sockets_tcp.tcp_socket + 1, &rfds, NULL, NULL, &sockets_tcp.tcp_timeout)){
+        int rec = recv(sockets_tcp.tcp_socket, buf, sizeof(buf), 0);
+        if(rec < 0){
+            recieve_package = (struct ConfigPackage *) buf;
+            if (debug_mode){
+                char message[280];
+                sprintf(message,
+                        "DEBUG -> \t\t Received %s;\n"
+                        "\t\t\t\t\t  Bytes:%lu,\n"
+                        "\t\t\t\t\t  name:%s,\n "
+                        "\t\t\t\t\t  mac:%s,\n"
+                        "\t\t\t\t\t  rand num:%s,\n"
+                        "\t\t\t\t\t  data:%s\n\n",
+                        get_packet_string((unsigned char) (*recieve_package).pdu_type),
+                        sizeof(*recieve_package), (*recieve_package).id,
+                        (*recieve_package).mac_adress, (*recieve_package).num_ale,
+                        (*recieve_package).data);
+                print_message(message);
+            }
         }
+        
     }
-
     return *recieve_package;
+    
 }
 bool check_received_package_ack_is_valid_tcp(struct ConfigPackage received, unsigned char expected_type){
     if(expected_type == get_packet_type("GET_END")){
@@ -853,11 +850,7 @@ void execute_get_cfg(){
     struct ConfigPackage get_package = build_get_confg(config_file);
     send_package_tcp_to_server(get_package);
 
-    fd_set rfds;
-
-    prepare_receive_package_tcp(rfds, W);
-
-    struct ConfigPackage recived_package = receive_package_via_tcp();
+    struct ConfigPackage recived_package = receive_package_via_tcp(get_waiting_time_after_sent(W));
 
     if(sockets_tcp.tcp_timeout.tv_sec == 0){
         if (debug_mode) {print_message("ERROR -> No answer received for GET_FILE package sent\n");}
@@ -872,11 +865,7 @@ void execute_get_cfg(){
     }
 
     while(recived_package.pdu_type != get_packet_type("GET_END")){
-        
-        fd_set rfds1;
-        prepare_receive_package_tcp(rfds1, W);
-
-        recived_package = receive_package_via_tcp();
+        recived_package = receive_package_via_tcp(get_waiting_time_after_sent(W));
         if(sockets_tcp.tcp_timeout.tv_sec == 0){
             if(debug_mode){
                 char message[150];
